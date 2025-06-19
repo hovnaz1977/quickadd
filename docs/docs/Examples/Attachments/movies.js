@@ -2,6 +2,7 @@ const notice = msg => new Notice(msg, 5000);
 const log = msg => console.log(msg);
 
 const API_KEY_OPTION = "OMDb API Key";
+const YT_API_KEY_OPTION = "YouTube API Key";
 const API_URL = "https://www.omdbapi.com/";
 const IMDB_BASE_URL = "https://www.imdb.com/title/";
 
@@ -15,6 +16,11 @@ module.exports = {
                 type: "text",
                 defaultValue: "",
                 placeholder: "OMDb API Key",
+            },
+            [YT_API_KEY_OPTION]: {
+                type: "text",
+                defaultValue: "",
+                placeholder: "YouTube API Key",
             },
         }
     }
@@ -49,6 +55,8 @@ async function start(params, settings) {
         selectedShow = await getByImdbId(choice.imdbID);
     }
 
+    const trailer = await getYouTubeTrailer(selectedShow.Title);
+
     QuickAdd.variables = {
         ...selectedShow,
         imdbUrl: IMDB_BASE_URL + selectedShow.imdbID,
@@ -59,7 +67,9 @@ async function start(params, settings) {
         fileName: replaceIllegalFileNameCharactersInString(selectedShow.Title),
         typeLink: `[[${selectedShow.Type === "movie" ? "Movies" : "Series"}]]`,
         languageLower: selectedShow.Language.toLowerCase(),
-    }
+        trailerMarkdown: trailer ? trailer.embedMarkdown : "Trailer not found",
+        trailerIframe: trailer ? trailer.embedIframe : "Trailer not found",
+    };
 }
 
 function isImdbId(str) {
@@ -74,15 +84,8 @@ function formatDateString(dateString) {
     const [day, month, year] = dateString.split(' ');
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const monthIndex = monthNames.indexOf(month);
-
     const date = new Date(year, monthIndex, day);
-
-    // Format the date as yyyy-mm-dd
-    const formattedYear = date.getFullYear();
-    const formattedMonth = String(date.getMonth() + 1).padStart(2, '0');
-    const formattedDay = String(date.getDate()).padStart(2, '0');
-
-    return `${formattedYear}-${formattedMonth}-${formattedDay}`;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
 async function getByQuery(query) {
@@ -113,8 +116,6 @@ async function getByImdbId(id) {
 
 function linkifyList(list) {
     if (list.length === 0) return "";
-    if (list.length === 1) return `\n  - "[[${list[0]}]]"`;
-
     return list.map(item => `\n  - "[[${item.trim()}]]"`).join("");
 }
 
@@ -139,4 +140,39 @@ async function apiGet(url, data) {
     });
 
     return JSON.parse(res);
+}
+
+// YouTube Trailer Fetch
+async function getYouTubeTrailer(title) {
+    const searchQuery = `${title} official trailer`;
+    const apiKey = Settings[YT_API_KEY_OPTION];
+    if (!apiKey) {
+        notice("No YouTube API key provided.");
+        return null;
+    }
+
+    const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=1&q=${encodeURIComponent(searchQuery)}&key=${apiKey}`;
+
+    try {
+        const res = await request({
+            url,
+            method: 'GET',
+        });
+
+        const json = JSON.parse(res);
+        if (json.items && json.items.length > 0 && json.items[0].id.videoId) {
+            const videoId = json.items[0].id.videoId;
+            return {
+                videoId,
+                embedMarkdown: `[![Trailer](https://img.youtube.com/vi/${videoId}/0.jpg)](https://www.youtube.com/watch?v=${videoId})`,
+                embedIframe: `<iframe width="560" height="315" src="https://www.youtube.com/embed/${videoId}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`
+            };
+        } else {
+            return null;
+        }
+    } catch (err) {
+        notice("Failed to fetch YouTube trailer.");
+        log(err);
+        return null;
+    }
 }
